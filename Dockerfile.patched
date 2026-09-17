@@ -1,0 +1,86 @@
+# syntax=docker/dockerfile:1
+#
+# Build a hardened, server-only image from this checkout:
+#   docker buildx build --platform linux/amd64 \
+#     --build-arg VERSION=2025-04-22T22-12-26Z \
+#     --build-arg VCS_REF="$(git rev-parse HEAD)" \
+#     -f Dockerfile.patched -t minio:patched --load .
+
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=2025-04-22T22-12-26Z
+ARG VCS_REF=unknown
+ARG COPYRIGHT_YEAR=2026
+
+ENV CGO_ENABLED=0 \
+    GOPATH=/go
+
+WORKDIR /src
+
+# Keep the dependency-download layer cacheable independently from application source.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN test "$TARGETOS" = linux && test "$TARGETARCH" = amd64 && \
+    short_vcs_ref="$(printf '%s' "$VCS_REF" | cut -c1-12)" && \
+    GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build \
+      -tags kqueue \
+      -trimpath \
+      -ldflags "-s -w \
+        -X github.com/minio/minio/cmd.Version=$VERSION \
+        -X github.com/minio/minio/cmd.ReleaseTag=RELEASE.$VERSION \
+        -X github.com/minio/minio/cmd.CopyrightYear=$COPYRIGHT_YEAR \
+        -X github.com/minio/minio/cmd.CommitID=$VCS_REF \
+        -X github.com/minio/minio/cmd.ShortCommitID=$short_vcs_ref" \
+      -o /out/minio
+
+# The curl release and checksum are intentionally explicit: do not replace them
+# with a floating `releases/latest` URL. BuildKit validates the checksum before
+# making this artifact available to the runtime stage.
+FROM scratch AS curl-artifact
+ADD --checksum=sha256:e45ae1805ceb3f816e9768fbbaba05d98a2dc9c5577f66395f37660941d88e19 \
+    https://github.com/moparisthebest/static-curl/releases/download/v8.21.0/curl-amd64 /curl
+
+# This is the linux/amd64 UBI Micro manifest verified for the libcap fix.
+FROM --platform=linux/amd64 registry.access.redhat.com/ubi9/ubi-micro@sha256:7a0454cbd9bd847e8f6a63b6f0254a6efbeb6e0ed71a5d824a4f6cccbe626650
+
+ARG VERSION=2025-04-22T22-12-26Z
+ARG VCS_REF=unknown
+
+LABEL name="MinIO" \
+      vendor="MinIO Inc <dev@min.io>" \
+      maintainer="MinIO Inc <dev@min.io>" \
+      version="${VERSION}" \
+      revision="${VCS_REF}" \
+      summary="MinIO is a High Performance Object Storage, API compatible with Amazon S3 cloud storage service."
+
+ENV MINIO_ACCESS_KEY_FILE=access_key \
+    MINIO_SECRET_KEY_FILE=secret_key \
+    MINIO_ROOT_USER_FILE=access_key \
+    MINIO_ROOT_PASSWORD_FILE=secret_key \
+    MINIO_KMS_SECRET_KEY_FILE=kms_master_key \
+    MINIO_UPDATE_MINISIGN_PUBKEY="RWTx5Zr1tiHQLwG9keckT0c45M3AGeHD6IvimQHpyRywVWGbP1aVSGav" \
+    MINIO_CONFIG_ENV_FILE=config.env
+
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /out/minio /usr/bin/minio
+COPY --from=curl-artifact /curl /usr/bin/curl
+RUN chmod 0755 /usr/bin/curl
+
+# To restore the client after its separate security patch, add a named
+# `patched-mc` build stage and uncomment the next line:
+# COPY --from=patched-mc /out/mc /usr/bin/mc
+
+COPY CREDITS /licenses/CREDITS
+COPY LICENSE /licenses/LICENSE
+COPY dockerscripts/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
+
+EXPOSE 9000
+VOLUME ["/data"]
+
+ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
+CMD ["minio"]
