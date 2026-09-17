@@ -6,6 +6,8 @@
 #     --build-arg VCS_REF="$(git rev-parse HEAD)" \
 #     -f Dockerfile.patched -t minio:patched --load .
 
+FROM mc:patched AS patched-mc
+
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 
 ARG TARGETOS
@@ -64,7 +66,8 @@ ENV MINIO_ACCESS_KEY_FILE=access_key \
     MINIO_ROOT_PASSWORD_FILE=secret_key \
     MINIO_KMS_SECRET_KEY_FILE=kms_master_key \
     MINIO_UPDATE_MINISIGN_PUBKEY="RWTx5Zr1tiHQLwG9keckT0c45M3AGeHD6IvimQHpyRywVWGbP1aVSGav" \
-    MINIO_CONFIG_ENV_FILE=config.env
+    MINIO_CONFIG_ENV_FILE=config.env \
+    MC_CONFIG_DIR=/tmp/.mc
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/minio /usr/bin/minio
@@ -73,7 +76,8 @@ RUN chmod 0755 /usr/bin/curl
 
 # To restore the client after its separate security patch, add a named
 # `patched-mc` build stage and uncomment the next line:
-# COPY --from=patched-mc /out/mc /usr/bin/mc
+COPY --from=patched-mc /usr/bin/mc /usr/bin/mc
+COPY --from=patched-mc /licenses/CREDITS /licenses/mc-CREDITS
 
 COPY CREDITS /licenses/CREDITS
 COPY LICENSE /licenses/LICENSE
