@@ -7,6 +7,12 @@ Build it with an ISO-8601 release timestamp and the source revision being
 built:
 
 ```sh
+git clone https://github.com/OliverLeighC/minio.git
+
+cd minio
+
+git checkout security-patch
+
 docker buildx build --platform linux/amd64 \
   --build-arg VERSION=2025-04-22T22-12-26Z \
   --build-arg VCS_REF="$(git rev-parse HEAD)" \
@@ -15,7 +21,23 @@ docker buildx build --platform linux/amd64 \
   --load .
 ```
 
-The image pins UBI Micro and static curl. Update either only with a new digest
-or checksum, then rebuild and scan the resulting image. To restore `mc`, create
-a `patched-mc` build stage that produces `/out/mc` and enable the marked copy in
-the final stage only after scanning that binary.
+The image pins UBI Micro. Update with a new digest
+or checksum, then rebuild and scan the resulting image. 
+
+To restore `mc`, create a `patched-mc` build stage and uncomment the related lines. 
+
+The patched mc image can be built from https://github.com/OliverLeighC/mc 
+
+```sh
+git clone https://github.com/OliverLeighC/mc.git
+
+cd mc
+
+git checkout security-patch
+
+docker buildx build --platform linux/amd64 \
+  --build-arg VERSION=2025-04-16T18-13-26Z \
+  --build-arg VCS_REF="$(git rev-parse HEAD)" \
+  -f Dockerfile.patched \
+  -t mc:patched .
+```
